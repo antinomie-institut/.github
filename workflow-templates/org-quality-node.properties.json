@@ -1,0 +1,12 @@
+{
+  "name": "Antiphoria Quality Gate (Node)",
+  "description": "Node-focused quality gate with Trivy, package install policy, script checks, and CI handoff artifacts.",
+  "iconName": "octicon shield-check",
+  "categories": [
+    "Security",
+    "JavaScript"
+  ],
+  "filePatterns": [
+    "package\\.json$"
+  ]
+}

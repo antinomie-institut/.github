@@ -1,85 +1,135 @@
 # Antiphoria Quality Policy
 
-This repository centralizes the default GitHub Actions quality policy for `antiphoria`.
-The goal is a strict baseline for fast-moving, AI-assisted, experimental code, with **clear reports** so you can iterate locally (including with Cursor) until checks pass.
+This repository defines reusable, repo-agnostic GitHub Actions quality gates for `antiphoria`.
+The policy is intentionally modular so each repository can explicitly opt into only the gates it wants.
 
-## Blocking checks (enforced today)
+## Architecture
 
-The reusable workflow [.github/workflows/quality-gate.yml](.github/workflows/quality-gate.yml) aggregates these **blocking** jobs into the final `quality-gate` job:
+The shared orchestrator is:
 
-| Job | When it runs | What it enforces |
-|-----|----------------|------------------|
-| `detect` | Always | Detects Python (`*.py` tracked) and Node (`package.json`). |
-| `trivy` | Always | Filesystem scan: **vuln**, **misconfig**, **secret**, **license** (see [trivy.yaml](trivy.yaml)). |
-| `python-ruff` | If Python detected | Shared [ruff.toml](ruff.toml): lint (incl. Bandit-style rules) + format check. |
-| `python-test` | If Python detected | `unittest` under `tests/` if that directory exists; otherwise skipped (does not fail). |
-| `node-quality` | If `package.json` exists | Runs `lint`, `check`, and `build` scripts **only when** each script is defined in `package.json`. |
+- [.github/workflows/quality-gate.yml](.github/workflows/quality-gate.yml)
 
-**Advisory only (does not fail the gate):**
+Atomic reusable workers:
 
-- **`python-codeaudit`**: HTML reports are produced and uploaded as artifacts; steps use `continue-on-error` so noise does not block merges. Treat as extra signal during hardening.
+- [.github/workflows/qg-trivy.yml](.github/workflows/qg-trivy.yml)
+- [.github/workflows/qg-python-ruff.yml](.github/workflows/qg-python-ruff.yml)
+- [.github/workflows/qg-python-test.yml](.github/workflows/qg-python-test.yml)
+- [.github/workflows/qg-python-codeaudit.yml](.github/workflows/qg-python-codeaudit.yml)
+- [.github/workflows/qg-node-quality.yml](.github/workflows/qg-node-quality.yml)
+- [.github/workflows/qg-ci-handoff.yml](.github/workflows/qg-ci-handoff.yml)
 
-**Not implemented in this workflow (ignore older bullets elsewhere):**
+## Caller Templates
 
-- Organization-wide preflight file requirements
-- `web-dast` (OWASP ZAP)
-- Automatic `npm audit` / dependency policy in the Node job
-- Mandatory `tests/` for all Python repos
+Use stack-specific templates in [workflow-templates](workflow-templates):
 
-## Required status check in GitHub
+- [org-quality-python.yml](workflow-templates/org-quality-python.yml)
+- [org-quality-node.yml](workflow-templates/org-quality-node.yml)
+- [org-quality-security.yml](workflow-templates/org-quality-security.yml)
 
-In branch protection or rulesets, require the check named **`quality-gate`** (the final aggregating job). Confirm the exact label in **Actions** on a sample run; GitHub shows the job name from the reusable workflow.
+A legacy combined template remains available:
 
-## Cursor green-loop (reports)
+- [org-quality.yml](workflow-templates/org-quality.yml)
 
-After each push or `workflow_dispatch`:
+## Gate Toggle Contract
 
-1. Open the workflow run in GitHub Actions.
-2. Read the **job summaries** (Trivy, Ruff, Python tests, Node) on the run summary page.
-3. Download the **`ci-handoff-<run_id>`** artifact (zip). Inside you will find **`CURSOR_CI_REPORT.md`** plus copies of **`trivy-results.json`**, **`ruff-results.json`**, and CodeAudit HTML when present.
-4. Attach `CURSOR_CI_REPORT.md` and any JSON files to Cursor (or paste the markdown) and fix issues until **`quality-gate`** is green.
+All gate toggles are explicit boolean inputs on the orchestrator:
 
-Other artifacts (retention 30 days unless noted):
+- `run-trivy`
+- `run-python-ruff`
+- `run-python-test`
+- `run-python-codeaudit`
+- `run-node-quality`
+- `run-ci-handoff`
 
-- `trivy-scan-*`: JSON + HTML
-- `ruff-scan-*`: Ruff diagnostics JSON
-- `codeaudit-reports-*`: CodeAudit HTML
-- `node-quality-logs-*`: Captured lint/check/build output (on failure, 14 days)
+### Default-Off Rule (Required)
 
-## Triage and suppressions
+Any newly added scanner/linter must follow this contract:
 
-After manual review, you may narrow findings **per repository**:
+```yaml
+inputs:
+  run-new-linter:
+    type: boolean
+    default: false
+```
 
-- **Trivy:** `.trivyignore`, or paths / rules in a repo-level `trivy.yaml`, or shared policy tweaks in this org repo (affects everyone).
-- **Ruff:** `[tool.ruff.lint.per-file-ignores]` or `# noqa: CODE` in the target repo’s `pyproject.toml` / `ruff.toml`.
-- **Document** durable suppressions with a short note (PR comment or README) so future triage knows why.
+This prevents accidental org-wide rollout of new tools.
 
-## Caller workflow (member repositories)
+## Blocking vs Advisory
 
-Use [workflow-templates/org-quality.yml](workflow-templates/org-quality.yml) as the starting point. It must call the reusable workflow with valid inputs, for example:
+Blocking jobs (aggregated by final `quality-gate`):
 
-- `policy-ref: main` (must match the `policy-ref` input name).
+- `detect`
+- `trivy` (when enabled)
+- `python-ruff` (when enabled and Python detected)
+- `python-test` (when enabled and Python detected)
+- `node-quality` (when enabled and Node detected)
 
-Optional manual runs: the template includes **`workflow_dispatch`**.
+Advisory job:
 
-### Trivy SARIF and GitHub code scanning
+- `python-codeaudit` (when enabled and Python detected)
 
-To upload Trivy results to GitHub **code scanning** (SARIF):
+`python-codeaudit` always emits structured JSON artifacts, but it does not block `quality-gate`.
 
-1. Set `upload-trivy-sarif: true` in the caller’s `with:` block.
-2. Add **`security-events: write`** to the caller workflow `permissions` (alongside `contents: read`).
+## Repo-Agnostic Guardrails
 
-**Note:** For **private** repositories, the code scanning UI usually requires **GitHub Advanced Security**. Public repositories can use code scanning without GHAS. If you do not use SARIF, leave `upload-trivy-sarif: false` and omit `security-events: write`.
+- No repository-specific system build logic in shared workflows.
+- No shared `liboqs` build/install in org baseline.
+- No Trivy SARIF/code-scanning upload path in org baseline.
+- Python gates run only when Python files are detected.
+- Node gates run only when `package.json` is detected.
 
-The SARIF upload runs in a separate job **`trivy-sarif`** so default callers are not forced to grant `security-events: write`.
+## Supply-Chain Hardening
 
-## Rollout
+Pinned versions live in:
 
-1. Copy or generate the caller workflow from `workflow-templates/org-quality.yml` into each repository as `.github/workflows/<name>.yml`.
-2. Require **`quality-gate`** in rulesets or branch protection.
-3. Keep repositories private during initial triage; use **`ci-handoff`** artifacts and job summaries to drive fixes.
-4. Once stable, pin callers to a tag (e.g. `@v1`) instead of `@main`.
+- [ci/requirements-ruff.txt](ci/requirements-ruff.txt) (hashed)
+- [ci/requirements-codeaudit.txt](ci/requirements-codeaudit.txt) (pinned)
+- [ci/requirements-tools.txt](ci/requirements-tools.txt)
 
-## Strict mode (historical)
+Current hardening:
 
-Earlier drafts described a `strict_mode` input and preflight gates; those are **not** wired in the current reusable workflow. Any future strict mode should be implemented in `quality-gate.yml` and documented here in the same commit.
+- GitHub Actions are pinned by immutable commit SHA in workflows.
+- Trivy action is pinned, and scanner version is explicit (`trivy-version` input).
+- Ruff installs from a pinned and hashed requirement file.
+- CodeAudit is pinned; the workflow verifies the top-level wheel SHA before install.
+
+## Structured JSON Artifact Contract
+
+Each gate writes dedicated JSON for machine triage:
+
+- Trivy: `trivy-results.json` + `trivy-summary.json`
+- Ruff: `ruff-results.json` + `ruff-summary.json`
+- Python tests: `python-test-results.json`
+- Node: `node-quality-results.json`
+- CodeAudit: `codeaudit-results.json`
+
+Artifacts are uploaded separately per gate:
+
+- `qg-trivy-<run_id>`
+- `qg-python-ruff-<run_id>`
+- `qg-python-test-<run_id>`
+- `qg-node-quality-<run_id>`
+- `qg-python-codeaudit-<run_id>`
+- `qg-ci-handoff-<run_id>`
+
+The handoff bundle includes:
+
+- `CURSOR_CI_REPORT.md`
+- `ci-handoff-manifest.json`
+- copied per-gate JSON files when available
+
+## Required Status Check
+
+In branch protection/rulesets, require the check named:
+
+- `quality-gate`
+
+This is the final aggregate gate job.
+
+## Pilot and Rollout
+
+1. Pilot in one representative Python repo using `org-quality-python.yml`.
+2. Pilot in one representative Node repo using `org-quality-node.yml`.
+3. Validate artifact separation and JSON outputs in both pilots.
+4. Roll out stack-specific templates org-wide.
+5. Keep `org-quality.yml` only for legacy compatibility.

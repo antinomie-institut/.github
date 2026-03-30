@@ -1,0 +1,111 @@
+name: QG - CI Handoff
+
+on:
+  workflow_call:
+    inputs:
+      policy-ref:
+        description: Ref or tag to use for shared antiphoria policy files.
+        required: false
+        type: string
+        default: main
+      detect-result:
+        description: Result of detect job.
+        required: true
+        type: string
+      trivy-result:
+        description: Result of trivy job.
+        required: true
+        type: string
+      python-ruff-result:
+        description: Result of python-ruff job.
+        required: true
+        type: string
+      python-test-result:
+        description: Result of python-test job.
+        required: true
+        type: string
+      python-codeaudit-result:
+        description: Result of python-codeaudit job.
+        required: true
+        type: string
+      node-quality-result:
+        description: Result of node-quality job.
+        required: true
+        type: string
+      quality-gate-result:
+        description: Result of quality-gate aggregate job.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ci-handoff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare handoff directory
+        shell: bash
+        run: mkdir -p handoff-raw
+
+      - name: Download workflow artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: handoff-raw
+
+      - name: Record job results for handoff
+        shell: bash
+        run: |
+          jq -n \
+            --arg detect "${{ inputs.detect-result }}" \
+            --arg trivy "${{ inputs.trivy-result }}" \
+            --arg ruff "${{ inputs.python-ruff-result }}" \
+            --arg pytest "${{ inputs.python-test-result }}" \
+            --arg codeaudit "${{ inputs.python-codeaudit-result }}" \
+            --arg node "${{ inputs.node-quality-result }}" \
+            --arg gate "${{ inputs.quality-gate-result }}" \
+            '{
+              detect: $detect,
+              trivy: $trivy,
+              "python-ruff": $ruff,
+              "python-test": $pytest,
+              "python-codeaudit": $codeaudit,
+              "node-quality": $node,
+              "quality-gate": $gate
+            }' > handoff-raw/_job_results.json
+
+      - name: Checkout policy repo (handoff script)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: antiphoria/.github
+          ref: ${{ inputs.policy-ref }}
+          path: .org-handoff
+
+      - name: Normalize handoff script line endings
+        shell: bash
+        run: sed -i 's/\r$//' .org-handoff/scripts/ci-handoff-report.sh
+
+      - name: Build Cursor handoff bundle
+        shell: bash
+        env:
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          bash .org-handoff/scripts/ci-handoff-report.sh handoff-raw handoff-bundle
+
+      - name: Zip handoff bundle
+        shell: bash
+        run: zip -r ci-handoff.zip handoff-bundle
+
+      - name: Upload Cursor CI handoff artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qg-ci-handoff-${{ github.run_id }}
+          path: ci-handoff.zip
+          if-no-files-found: warn
+          retention-days: 30

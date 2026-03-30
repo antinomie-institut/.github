@@ -1,9 +1,5 @@
-# Legacy combined caller for member repos.
-# Prefer stack-specific templates:
-# - org-quality-python.yml
-# - org-quality-node.yml
-# - org-quality-security.yml
-name: Org Quality (Legacy Combined)
+# Python-focused org quality gate template.
+name: Org Quality (Python)
 
 on:
   pull_request:
@@ -24,5 +20,5 @@ jobs:
       run-python-ruff: true
       run-python-test: true
       run-python-codeaudit: true
-      run-node-quality: true
+      run-node-quality: false
       run-ci-handoff: true

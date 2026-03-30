@@ -1,0 +1,11 @@
+{
+  "name": "Antiphoria Quality Gate (Security Baseline)",
+  "description": "Security-only baseline with Trivy scan and JSON artifacts for machine-readable triage.",
+  "iconName": "octicon shield-check",
+  "categories": [
+    "Security"
+  ],
+  "filePatterns": [
+    ".*"
+  ]
+}

@@ -1,9 +1,0 @@
-# Trivy config for SARIF upload (no exit-code / format; avoids clashing with trivy.yaml JSON run).
-timeout: 10m
-
-scan:
-  scanners:
-    - vuln
-    - misconfig
-    - secret
-    - license

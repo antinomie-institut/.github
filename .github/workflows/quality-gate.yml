@@ -14,12 +14,43 @@ on:
         type: string
         default: "3.11"
       node-version:
-        description: Node.js version for Node and Astro checks.
+        description: Node.js version for Node-specific checks.
         required: false
         type: string
         default: "20"
-      upload-trivy-sarif:
-        description: Upload Trivy results to GitHub code scanning (requires security-events write and GHAS or a public repo).
+      trivy-version:
+        description: Pinned Trivy scanner version.
+        required: false
+        type: string
+        default: "v0.69.3"
+      # Safety rule: every run-* gate toggle defaults to false.
+      run-trivy:
+        description: Run Trivy filesystem scan.
+        required: false
+        type: boolean
+        default: false
+      run-python-ruff:
+        description: Run Ruff lint and format checks for Python repositories.
+        required: false
+        type: boolean
+        default: false
+      run-python-test:
+        description: Run Python unit tests from tests/ when present.
+        required: false
+        type: boolean
+        default: false
+      run-python-codeaudit:
+        description: Run CodeAudit filescan for Python repositories (advisory).
+        required: false
+        type: boolean
+        default: false
+      run-node-quality:
+        description: Run Node dependency install plus lint/check/build scripts.
+        required: false
+        type: boolean
+        default: false
+      run-ci-handoff:
+        description: Build the Cursor handoff artifact bundle.
         required: false
         type: boolean
         default: false
@@ -36,7 +67,7 @@ jobs:
       package_manager: ${{ steps.detect.outputs.package_manager }}
     steps:
       - name: Checkout target repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Detect repository profile
         id: detect
@@ -66,399 +97,42 @@ jobs:
 
   trivy:
     needs: detect
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
-
-      - name: Checkout shared policy repository
-        uses: actions/checkout@v4
-        with:
-          repository: antiphoria/.github
-          ref: ${{ inputs.policy-ref }}
-          path: .org-policy
-
-      - name: Run Trivy JSON scan
-        id: trivy_json
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-        with:
-          scan-type: fs
-          scan-ref: .
-          trivy-config: .org-policy/trivy.yaml
-          cache: "true"
-
-      - name: Trivy summary for GitHub Step Summary
-        if: always()
-        shell: bash
-        run: |
-          echo "## Trivy" >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          if [[ -f trivy-results.json ]]; then
-            vuln="$(jq '[.Results[]? | (.Vulnerabilities // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo "?")"
-            secret="$(jq '[.Results[]? | (.Secrets // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo "?")"
-            misconf="$(jq '[.Results[]? | (.Misconfigurations // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo "?")"
-            lic="$(jq '[.Results[]? | (.Licenses // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo "?")"
-            echo "| Category | Count |" >> "$GITHUB_STEP_SUMMARY"
-            echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Vulnerabilities | ${vuln} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Secrets | ${secret} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Misconfigurations | ${misconf} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Licenses | ${lic} |" >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo "<details><summary>Sample findings (first 10 lines)</summary>" >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            jq -r '
-              [.Results[]? | . as $r |
-                ($r.Vulnerabilities // [])[] | "[vuln] \($r.Target // "?"): \(.VulnerabilityID // .PkgName // "?")"
-              ] + [.Results[]? | . as $r |
-                ($r.Secrets // [])[] | "[secret] \($r.Target // "?"): \(.Title // .RuleID // "?")"
-              ] + [.Results[]? | . as $r |
-                ($r.Misconfigurations // [])[] | "[misconfig] \($r.Target // "?"): \(.AVDID // .ID // .Title // "?")"
-              ]
-              | .[0:10][]' trivy-results.json 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || echo "(parse error)" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No \`trivy-results.json\` produced (see Trivy job log)." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload Trivy artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-scan-${{ github.run_id }}
-          path: |
-            trivy-results.json
-            trivy-report.html
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Enforce Trivy result
-        if: always()
-        shell: bash
-        run: |
-          if [ "${{ steps.trivy_json.outcome }}" != "success" ]; then
-            echo "Trivy reported blocking findings or encountered a blocking error."
-            exit 1
-          fi
-
-  trivy-sarif:
-    needs: trivy
-    if: ${{ inputs.upload-trivy-sarif }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
-
-      - name: Checkout shared policy repository
-        uses: actions/checkout@v4
-        with:
-          repository: antiphoria/.github
-          ref: ${{ inputs.policy-ref }}
-          path: .org-policy
-
-      - name: Run Trivy SARIF (for GitHub code scanning)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-        with:
-          scan-type: fs
-          scan-ref: .
-          trivy-config: .org-policy/trivy-sarif.yaml
-          format: sarif
-          output: trivy-results.sarif
-          exit-code: "0"
-
-      - name: Upload Trivy SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
+    if: ${{ inputs.run-trivy }}
+    uses: ./.github/workflows/qg-trivy.yml
+    with:
+      policy-ref: ${{ inputs.policy-ref }}
+      trivy-version: ${{ inputs.trivy-version }}
 
   python-ruff:
     needs: detect
-    if: needs.detect.outputs.has_python == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
-
-      - name: Checkout shared policy repository
-        uses: actions/checkout@v4
-        with:
-          repository: antiphoria/.github
-          ref: ${{ inputs.policy-ref }}
-          path: .org-policy
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ inputs.python-version }}
-
-      - name: Install Ruff
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff
-
-      - name: Ruff lint (JSON report)
-        id: ruff_lint
-        continue-on-error: true
-        run: ruff check . --config .org-policy/ruff.toml --output-format json -o ruff-results.json
-
-      - name: Ruff summary for GitHub Step Summary
-        if: always()
-        shell: bash
-        run: |
-          echo "## Ruff" >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          if [[ -f ruff-results.json ]]; then
-            total="$(jq 'length' ruff-results.json 2>/dev/null || echo "?")"
-            echo "Diagnostics: **${total}**" >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo "<details><summary>Top rules by count</summary>" >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            jq -r 'group_by(.code) | map({code: .[0].code, n: length}) | sort_by(-.n) | .[:15] | .[] | "\(.n)\t\(.code)"' ruff-results.json 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
-            echo "<details><summary>First 15 issues</summary>" >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            jq -r '.[:15][] | "\(.filename // "?"):\(.location.row // "?")\t\(.code // "?")\t\(.message // "")"' ruff-results.json 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No \`ruff-results.json\` (see Ruff job log)." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload Ruff JSON artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ruff-scan-${{ github.run_id }}
-          path: ruff-results.json
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Ruff format check
-        run: ruff format . --config .org-policy/ruff.toml --check
-
-      - name: Enforce Ruff lint outcome
-        if: steps.ruff_lint.outcome != 'success'
-        run: |
-          echo "Ruff lint failed; see summary and ruff-scan artifact."
-          exit 1
+    if: ${{ inputs.run-python-ruff && needs.detect.outputs.has_python == 'true' }}
+    uses: ./.github/workflows/qg-python-ruff.yml
+    with:
+      policy-ref: ${{ inputs.policy-ref }}
+      python-version: ${{ inputs.python-version }}
 
   python-test:
     needs: detect
-    if: needs.detect.outputs.has_python == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ inputs.python-version }}
-        
-      - name: Install system dependencies and build liboqs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgit2-dev pkg-config cmake ninja-build libssl-dev build-essential
-          # Manually build and install the C library
-          git clone --branch main https://github.com/open-quantum-safe/liboqs.git
-          cd liboqs
-          mkdir build && cd build
-          cmake -GNinja -DOQS_USE_OPENSSL=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
-          ninja
-          sudo ninja install
-          sudo ldconfig
-
-      - name: Install project and dependencies
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f setup.py ] || [ -f pyproject.toml ]; then
-            pip install -e .
-          fi
-
-      - name: Run unit tests (if tests directory exists)
-        id: unit_tests
-        shell: bash
-        run: |
-          if [ -d tests ]; then
-            echo "ran=true" >> "$GITHUB_OUTPUT"
-            python -m unittest discover -s tests
-          else
-            echo "ran=false" >> "$GITHUB_OUTPUT"
-            echo "No tests/ directory found. Skipping."
-          fi
-
-      - name: Python tests summary
-        if: always()
-        shell: bash
-        run: |
-          echo "## Python tests" >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.unit_tests.outputs.ran }}" = "true" ]; then
-            echo "Ran \`unittest\` discovery under \`tests/\` (see this job log for tracebacks)." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Skipped: no \`tests/\` directory." >> "$GITHUB_STEP_SUMMARY"
-          fi
+    if: ${{ inputs.run-python-test && needs.detect.outputs.has_python == 'true' }}
+    uses: ./.github/workflows/qg-python-test.yml
+    with:
+      python-version: ${{ inputs.python-version }}
 
   python-codeaudit:
     needs: detect
-    if: needs.detect.outputs.has_python == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ inputs.python-version }}
-
-      - name: Install CodeAudit
-        continue-on-error: true
-        run: |
-          python -m pip install --upgrade pip
-          pip install codeaudit
-
-      - name: Create report directory
-        run: mkdir -p codeaudit-reports
-
-      - name: Run CodeAudit overview
-        continue-on-error: false
-        run: codeaudit overview . codeaudit-reports/overview.html
-
-      - name: Run CodeAudit filescan
-        continue-on-error: false
-        run: codeaudit filescan . codeaudit-reports/filescan.html
-
-      - name: Upload CodeAudit artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: codeaudit-reports-${{ github.run_id }}
-          path: codeaudit-reports
-          if-no-files-found: warn
-          retention-days: 30
+    if: ${{ inputs.run-python-codeaudit && needs.detect.outputs.has_python == 'true' }}
+    uses: ./.github/workflows/qg-python-codeaudit.yml
+    with:
+      policy-ref: ${{ inputs.policy-ref }}
+      python-version: ${{ inputs.python-version }}
 
   node-quality:
     needs: detect
-    if: needs.detect.outputs.has_node == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install dependencies
-        shell: bash
-        env:
-          PACKAGE_MANAGER: ${{ needs.detect.outputs.package_manager }}
-        run: |
-          case "$PACKAGE_MANAGER" in
-            pnpm)
-              if [ -f pnpm-lock.yaml ]; then
-                pnpm install --frozen-lockfile
-              else
-                pnpm install
-              fi
-              ;;
-            yarn)
-              yarn install --immutable || yarn install --frozen-lockfile || yarn install
-              ;;
-            *)
-              if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-                npm ci
-              else
-                npm install
-              fi
-              ;;
-          esac
-
-      - name: Run lint script when present
-        shell: bash
-        env:
-          PACKAGE_MANAGER: ${{ needs.detect.outputs.package_manager }}
-        run: |
-          set -euo pipefail
-          if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.lint ? 0 : 1)"; then
-            case "$PACKAGE_MANAGER" in
-              pnpm) pnpm run lint 2>&1 | tee node-lint.log ;;
-              yarn) yarn run lint 2>&1 | tee node-lint.log ;;
-              *) npm run lint --if-present 2>&1 | tee node-lint.log ;;
-            esac
-          else
-            echo "No lint script defined." | tee node-lint.log
-          fi
-
-      - name: Run check script when present
-        shell: bash
-        env:
-          PACKAGE_MANAGER: ${{ needs.detect.outputs.package_manager }}
-        run: |
-          set -euo pipefail
-          : > node-scripts.log
-          if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.check ? 0 : 1)"; then
-            case "$PACKAGE_MANAGER" in
-              pnpm) pnpm run check 2>&1 | tee -a node-scripts.log ;;
-              yarn) yarn run check 2>&1 | tee -a node-scripts.log ;;
-              *) npm run check --if-present 2>&1 | tee -a node-scripts.log ;;
-            esac
-          else
-            echo "No check script defined." | tee -a node-scripts.log
-          fi
-
-      - name: Run build script when present
-        shell: bash
-        env:
-          PACKAGE_MANAGER: ${{ needs.detect.outputs.package_manager }}
-        run: |
-          set -euo pipefail
-          if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.build ? 0 : 1)"; then
-            case "$PACKAGE_MANAGER" in
-              pnpm) pnpm run build 2>&1 | tee -a node-scripts.log ;;
-              yarn) yarn run build 2>&1 | tee -a node-scripts.log ;;
-              *) npm run build --if-present 2>&1 | tee -a node-scripts.log ;;
-            esac
-          else
-            echo "No build script defined." | tee -a node-scripts.log
-          fi
-
-      - name: Upload Node script logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: node-quality-logs-${{ github.run_id }}
-          path: |
-            node-lint.log
-            node-scripts.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Node quality summary
-        if: always()
-        shell: bash
-        run: |
-          echo "## Node (lint / check / build)" >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          echo "See this job log. On failure, \`node-quality-logs-*\` artifact may include captured output." >> "$GITHUB_STEP_SUMMARY"
+    if: ${{ inputs.run-node-quality && needs.detect.outputs.has_node == 'true' }}
+    uses: ./.github/workflows/qg-node-quality.yml
+    with:
+      node-version: ${{ inputs.node-version }}
+      package-manager: ${{ needs.detect.outputs.package_manager }}
 
   quality-gate:
     if: always()
@@ -508,82 +182,22 @@ jobs:
           fi
 
   ci-handoff:
-    if: always()
+    if: ${{ always() && inputs.run-ci-handoff }}
     needs:
       - detect
       - trivy
       - python-ruff
       - python-test
-      - node-quality
       - python-codeaudit
+      - node-quality
       - quality-gate
-    runs-on: ubuntu-latest
-    steps:
-      - name: Prepare handoff directory
-        run: mkdir -p handoff-raw
-
-      - name: Download workflow artifacts
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          path: handoff-raw
-
-      - name: Record job results for handoff
-        shell: bash
-        env:
-          JR_DETECT: ${{ needs.detect.result }}
-          JR_TRIVY: ${{ needs.trivy.result }}
-          JR_RUFF: ${{ needs.python-ruff.result }}
-          JR_PYTEST: ${{ needs.python-test.result }}
-          JR_CODEAUDIT: ${{ needs.python-codeaudit.result }}
-          JR_NODE: ${{ needs.node-quality.result }}
-          JR_GATE: ${{ needs.quality-gate.result }}
-        run: |
-          jq -n \
-            --arg detect "$JR_DETECT" \
-            --arg trivy "$JR_TRIVY" \
-            --arg ruff "$JR_RUFF" \
-            --arg pytest "$JR_PYTEST" \
-            --arg codeaudit "$JR_CODEAUDIT" \
-            --arg node "$JR_NODE" \
-            --arg gate "$JR_GATE" \
-            '{
-              detect: $detect,
-              trivy: $trivy,
-              "python-ruff": $ruff,
-              "python-test": $pytest,
-              "python-codeaudit": $codeaudit,
-              "node-quality": $node,
-              "quality-gate": $gate
-            }' > handoff-raw/_job_results.json
-
-      - name: Checkout policy repo (handoff script)
-        uses: actions/checkout@v4
-        with:
-          repository: antiphoria/.github
-          ref: ${{ inputs.policy-ref }}
-          path: .org-handoff
-
-      - name: Build Cursor handoff bundle
-        shell: bash
-        env:
-          GITHUB_SERVER_URL: ${{ github.server_url }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          bash .org-handoff/scripts/ci-handoff-report.sh handoff-raw handoff-bundle
-
-      - name: Zip handoff bundle
-        shell: bash
-        run: zip -r ci-handoff.zip handoff-bundle
-
-      - name: Upload Cursor CI handoff artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-handoff-${{ github.run_id }}
-          path: ci-handoff.zip
-          if-no-files-found: warn
-          retention-days: 30
+    uses: ./.github/workflows/qg-ci-handoff.yml
+    with:
+      policy-ref: ${{ inputs.policy-ref }}
+      detect-result: ${{ needs.detect.result }}
+      trivy-result: ${{ needs.trivy.result }}
+      python-ruff-result: ${{ needs.python-ruff.result }}
+      python-test-result: ${{ needs.python-test.result }}
+      python-codeaudit-result: ${{ needs.python-codeaudit.result }}
+      node-quality-result: ${{ needs.node-quality.result }}
+      quality-gate-result: ${{ needs.quality-gate.result }}

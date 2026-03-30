@@ -1,0 +1,224 @@
+name: QG - Node Quality
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version for quality checks.
+        required: false
+        type: string
+        default: "20"
+      package-manager:
+        description: Package manager detected by orchestrator (npm|pnpm|yarn).
+        required: false
+        type: string
+        default: npm
+
+permissions:
+  contents: read
+
+jobs:
+  node-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Enable Corepack
+        shell: bash
+        run: corepack enable
+
+      - name: Run Node quality checks
+        id: node_quality
+        continue-on-error: true
+        shell: bash
+        env:
+          PACKAGE_MANAGER_INPUT: ${{ inputs.package-manager }}
+        run: |
+          set -uo pipefail
+          overall_failed=0
+
+          package_manager="${PACKAGE_MANAGER_INPUT}"
+          case "$package_manager" in
+            pnpm|yarn|npm) ;;
+            *)
+              package_manager=npm
+              ;;
+          esac
+
+          if [ "$package_manager" = "npm" ] && [ -f pnpm-lock.yaml ]; then
+            package_manager=pnpm
+          elif [ "$package_manager" = "npm" ] && [ -f yarn.lock ]; then
+            package_manager=yarn
+          fi
+
+          install_status="success"
+          case "$package_manager" in
+            pnpm)
+              if [ -f pnpm-lock.yaml ]; then
+                pnpm install --frozen-lockfile 2>&1 | tee node-install.log
+              else
+                pnpm install 2>&1 | tee node-install.log
+              fi
+              rc="${PIPESTATUS[0]}"
+              ;;
+            yarn)
+              yarn install --immutable 2>&1 | tee node-install.log
+              rc="${PIPESTATUS[0]}"
+              if [ "$rc" -ne 0 ]; then
+                yarn install --frozen-lockfile 2>&1 | tee -a node-install.log
+                rc="${PIPESTATUS[0]}"
+              fi
+              if [ "$rc" -ne 0 ]; then
+                yarn install 2>&1 | tee -a node-install.log
+                rc="${PIPESTATUS[0]}"
+              fi
+              ;;
+            *)
+              if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+                npm ci 2>&1 | tee node-install.log
+              else
+                npm install 2>&1 | tee node-install.log
+              fi
+              rc="${PIPESTATUS[0]}"
+              ;;
+          esac
+
+          if [ "$rc" -ne 0 ]; then
+            install_status="failed"
+            overall_failed=1
+          fi
+
+          lint_defined=false
+          lint_status=skipped
+          check_defined=false
+          check_status=skipped
+          build_defined=false
+          build_status=skipped
+          : > node-scripts.log
+
+          if [ "$install_status" = "success" ]; then
+            if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.lint ? 0 : 1)"; then
+              lint_defined=true
+              case "$package_manager" in
+                pnpm) pnpm run lint 2>&1 | tee node-lint.log ;;
+                yarn) yarn run lint 2>&1 | tee node-lint.log ;;
+                *) npm run lint --if-present 2>&1 | tee node-lint.log ;;
+              esac
+              rc="${PIPESTATUS[0]}"
+              if [ "$rc" -eq 0 ]; then
+                lint_status=passed
+              else
+                lint_status=failed
+                overall_failed=1
+              fi
+            else
+              echo "No lint script defined." | tee node-lint.log
+            fi
+
+            if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.check ? 0 : 1)"; then
+              check_defined=true
+              case "$package_manager" in
+                pnpm) pnpm run check 2>&1 | tee -a node-scripts.log ;;
+                yarn) yarn run check 2>&1 | tee -a node-scripts.log ;;
+                *) npm run check --if-present 2>&1 | tee -a node-scripts.log ;;
+              esac
+              rc="${PIPESTATUS[0]}"
+              if [ "$rc" -eq 0 ]; then
+                check_status=passed
+              else
+                check_status=failed
+                overall_failed=1
+              fi
+            else
+              echo "No check script defined." | tee -a node-scripts.log
+            fi
+
+            if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.build ? 0 : 1)"; then
+              build_defined=true
+              case "$package_manager" in
+                pnpm) pnpm run build 2>&1 | tee -a node-scripts.log ;;
+                yarn) yarn run build 2>&1 | tee -a node-scripts.log ;;
+                *) npm run build --if-present 2>&1 | tee -a node-scripts.log ;;
+              esac
+              rc="${PIPESTATUS[0]}"
+              if [ "$rc" -eq 0 ]; then
+                build_status=passed
+              else
+                build_status=failed
+                overall_failed=1
+              fi
+            else
+              echo "No build script defined." | tee -a node-scripts.log
+            fi
+          else
+            echo "Dependency install failed; skipping lint/check/build." | tee node-lint.log
+            echo "Dependency install failed; skipping lint/check/build." | tee -a node-scripts.log
+          fi
+
+          jq -n \
+            --arg package_manager "$package_manager" \
+            --arg install_status "$install_status" \
+            --arg lint_status "$lint_status" \
+            --arg check_status "$check_status" \
+            --arg build_status "$build_status" \
+            --arg lint_defined "$lint_defined" \
+            --arg check_defined "$check_defined" \
+            --arg build_defined "$build_defined" \
+            '{
+              gate: "node-quality",
+              package_manager: $package_manager,
+              install: {status: $install_status},
+              lint: {defined: ($lint_defined == "true"), status: $lint_status},
+              check: {defined: ($check_defined == "true"), status: $check_status},
+              build: {defined: ($build_defined == "true"), status: $build_status}
+            }' > node-quality-results.json
+
+          if [ "$overall_failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Node quality summary for GitHub Step Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Node quality" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f node-quality-results.json ]]; then
+            jq -r '
+              "- Package manager: **\(.package_manager)**\n" +
+              "- Install: **\(.install.status)**\n" +
+              "- Lint: **\(.lint.status)** (defined=\(.lint.defined))\n" +
+              "- Check: **\(.check.status)** (defined=\(.check.defined))\n" +
+              "- Build: **\(.build.status)** (defined=\(.build.defined))"
+            ' node-quality-results.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No \`node-quality-results.json\` produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Node quality artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qg-node-quality-${{ github.run_id }}
+          path: |
+            node-quality-results.json
+            node-install.log
+            node-lint.log
+            node-scripts.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce Node quality outcome
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.node_quality.outcome }}" != "success" ]; then
+            echo "Node quality checks failed; see qg-node-quality artifact."
+            exit 1
+          fi

@@ -1,0 +1,12 @@
+{
+  "name": "Antiphoria Quality Gate (Python)",
+  "description": "Python-focused quality gate with Trivy, Ruff, unit tests, advisory CodeAudit, and CI handoff artifacts.",
+  "iconName": "octicon shield-check",
+  "categories": [
+    "Security",
+    "Python"
+  ],
+  "filePatterns": [
+    "\\.py$"
+  ]
+}

@@ -1,0 +1,120 @@
+name: QG - Trivy
+
+on:
+  workflow_call:
+    inputs:
+      policy-ref:
+        description: Ref or tag to use for shared antiphoria policy files.
+        required: false
+        type: string
+        default: main
+      trivy-version:
+        description: Pinned Trivy scanner version.
+        required: false
+        type: string
+        default: "v0.69.3"
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Checkout shared policy repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: antiphoria/.github
+          ref: ${{ inputs.policy-ref }}
+          path: .org-policy
+
+      - name: Run Trivy JSON scan
+        id: trivy_json
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          version: ${{ inputs.trivy-version }}
+          scan-type: fs
+          scan-ref: .
+          trivy-config: .org-policy/trivy.yaml
+          cache: "true"
+
+      - name: Build Trivy JSON summary
+        if: always()
+        shell: bash
+        env:
+          TRIVY_OUTCOME: ${{ steps.trivy_json.outcome }}
+        run: |
+          vuln=0
+          secret=0
+          misconf=0
+          lic=0
+
+          if [[ -f trivy-results.json ]]; then
+            vuln="$(jq '[.Results[]? | (.Vulnerabilities // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo 0)"
+            secret="$(jq '[.Results[]? | (.Secrets // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo 0)"
+            misconf="$(jq '[.Results[]? | (.Misconfigurations // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo 0)"
+            lic="$(jq '[.Results[]? | (.Licenses // []) | length] | add // 0' trivy-results.json 2>/dev/null || echo 0)"
+          fi
+
+          jq -n \
+            --arg outcome "$TRIVY_OUTCOME" \
+            --argjson vulnerabilities "$vuln" \
+            --argjson secrets "$secret" \
+            --argjson misconfigurations "$misconf" \
+            --argjson licenses "$lic" \
+            '{
+              scanner: "trivy",
+              outcome: $outcome,
+              counts: {
+                vulnerabilities: $vulnerabilities,
+                secrets: $secrets,
+                misconfigurations: $misconfigurations,
+                licenses: $licenses
+              }
+            }' > trivy-summary.json
+
+      - name: Trivy summary for GitHub Step Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Trivy" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f trivy-summary.json ]]; then
+            vuln="$(jq -r '.counts.vulnerabilities' trivy-summary.json)"
+            secret="$(jq -r '.counts.secrets' trivy-summary.json)"
+            misconf="$(jq -r '.counts.misconfigurations' trivy-summary.json)"
+            lic="$(jq -r '.counts.licenses' trivy-summary.json)"
+            echo "| Category | Count |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Vulnerabilities | ${vuln} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Secrets | ${secret} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Misconfigurations | ${misconf} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Licenses | ${lic} |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No \`trivy-summary.json\` produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Trivy artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qg-trivy-${{ github.run_id }}
+          path: |
+            trivy-results.json
+            trivy-report.html
+            trivy-summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce Trivy result
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.trivy_json.outcome }}" != "success" ]; then
+            echo "Trivy reported blocking findings or encountered a blocking error."
+            exit 1
+          fi

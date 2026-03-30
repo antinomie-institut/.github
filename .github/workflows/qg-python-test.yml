@@ -1,0 +1,132 @@
+name: QG - Python Tests
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Python version for tests.
+        required: false
+        type: string
+        default: "3.11"
+
+permissions:
+  contents: read
+
+jobs:
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install project and dependencies
+        id: install_project
+        continue-on-error: true
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f setup.py ] || [ -f pyproject.toml ]; then
+            python -m pip install -e .
+          else
+            echo "No setup.py or pyproject.toml found; skipping editable install."
+          fi
+
+      - name: Run unit tests (if tests directory exists)
+        id: unit_tests
+        if: always() && steps.install_project.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -d tests ]; then
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+            python -m unittest discover -s tests 2>&1 | tee python-test.log
+            rc="${PIPESTATUS[0]}"
+            if [ "$rc" -eq 0 ]; then
+              echo "result=passed" >> "$GITHUB_OUTPUT"
+            else
+              echo "result=failed" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "ran=false" >> "$GITHUB_OUTPUT"
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+            echo "No tests/ directory found. Skipping." | tee python-test.log
+          fi
+
+      - name: Build Python test summary JSON
+        if: always()
+        shell: bash
+        env:
+          INSTALL_OUTCOME: ${{ steps.install_project.outcome }}
+          TEST_RAN: ${{ steps.unit_tests.outputs.ran }}
+          TEST_RESULT: ${{ steps.unit_tests.outputs.result }}
+        run: |
+          ran="${TEST_RAN:-false}"
+          result="${TEST_RESULT:-skipped}"
+          reason=""
+
+          if [ "$INSTALL_OUTCOME" != "success" ]; then
+            result="failed"
+            reason="dependency_install_failed"
+          elif [ "$ran" != "true" ]; then
+            result="skipped"
+            reason="tests_directory_missing"
+          fi
+
+          jq -n \
+            --arg install_outcome "$INSTALL_OUTCOME" \
+            --arg result "$result" \
+            --arg reason "$reason" \
+            --arg ran "$ran" \
+            '{
+              gate: "python-test",
+              install_outcome: $install_outcome,
+              result: $result,
+              reason: $reason,
+              ran_tests: ($ran == "true")
+            }' > python-test-results.json
+
+      - name: Python tests summary for GitHub Step Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Python tests" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f python-test-results.json ]]; then
+            result="$(jq -r '.result' python-test-results.json)"
+            reason="$(jq -r '.reason' python-test-results.json)"
+            echo "- Result: **${result}**" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$reason" ]; then
+              echo "- Reason: \`${reason}\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "No \`python-test-results.json\` produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Python test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qg-python-test-${{ github.run_id }}
+          path: |
+            python-test-results.json
+            python-test.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce Python test outcome
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.install_project.outcome }}" != "success" ]; then
+            echo "Python dependency install failed."
+            exit 1
+          fi
+          if [ "${{ steps.unit_tests.outputs.result }}" = "failed" ]; then
+            echo "Python unit tests failed."
+            exit 1
+          fi

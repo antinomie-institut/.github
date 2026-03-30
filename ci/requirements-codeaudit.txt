@@ -1,0 +1,4 @@
+# Pinned for reproducible CI installs.
+# Top-level wheel hash for codeaudit==1.6.1:
+#   sha256:00df03c046339228e3cd56337ee95e33788771ccd1eaff99cf2d83fdafbdb336
+codeaudit==1.6.1

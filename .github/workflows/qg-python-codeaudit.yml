@@ -1,0 +1,142 @@
+name: QG - Python CodeAudit
+
+on:
+  workflow_call:
+    inputs:
+      policy-ref:
+        description: Ref or tag to use for shared antiphoria policy files.
+        required: false
+        type: string
+        default: main
+      python-version:
+        description: Python version for CodeAudit.
+        required: false
+        type: string
+        default: "3.11"
+
+permissions:
+  contents: read
+
+jobs:
+  python-codeaudit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Checkout shared policy repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: antiphoria/.github
+          ref: ${{ inputs.policy-ref }}
+          path: .org-policy
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install CodeAudit (pinned)
+        id: install_codeaudit
+        continue-on-error: true
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          mkdir -p .ci-tools
+          python -m pip download --no-deps --dest .ci-tools -r .org-policy/ci/requirements-codeaudit.txt
+          wheel_path="$(echo .ci-tools/codeaudit-1.6.1-*.whl)"
+          expected_sha="00df03c046339228e3cd56337ee95e33788771ccd1eaff99cf2d83fdafbdb336"
+          if [ ! -f "$wheel_path" ]; then
+            echo "Pinned CodeAudit wheel was not downloaded."
+            exit 1
+          fi
+          echo "${expected_sha}  ${wheel_path}" | sha256sum -c -
+          python -m pip install "$wheel_path"
+
+      - name: Create report directory
+        if: always()
+        shell: bash
+        run: mkdir -p codeaudit-reports
+
+      - name: Run CodeAudit filescan (JSON)
+        id: codeaudit_filescan
+        if: always() && steps.install_codeaudit.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: codeaudit filescan . codeaudit-reports/filescan.json
+
+      - name: Run CodeAudit overview (HTML)
+        id: codeaudit_overview
+        if: always() && steps.install_codeaudit.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: codeaudit overview . codeaudit-reports/overview.html
+
+      - name: Build CodeAudit summary JSON
+        if: always()
+        shell: bash
+        env:
+          INSTALL_OUTCOME: ${{ steps.install_codeaudit.outcome }}
+          FILESCAN_OUTCOME: ${{ steps.codeaudit_filescan.outcome }}
+          OVERVIEW_OUTCOME: ${{ steps.codeaudit_overview.outcome }}
+        run: |
+          native_valid=false
+          if [[ -f codeaudit-reports/filescan.json ]] && jq -e . codeaudit-reports/filescan.json >/dev/null 2>&1; then
+            native_valid=true
+          fi
+
+          if [ "$native_valid" = "true" ]; then
+            jq -n \
+              --arg install_outcome "$INSTALL_OUTCOME" \
+              --arg filescan_outcome "$FILESCAN_OUTCOME" \
+              --arg overview_outcome "$OVERVIEW_OUTCOME" \
+              --slurpfile filescan codeaudit-reports/filescan.json \
+              '{
+                gate: "python-codeaudit",
+                advisory: true,
+                install_outcome: $install_outcome,
+                filescan_outcome: $filescan_outcome,
+                overview_outcome: $overview_outcome,
+                native_filescan_json_present: true,
+                filescan: $filescan[0]
+              }' > codeaudit-results.json
+          else
+            jq -n \
+              --arg install_outcome "$INSTALL_OUTCOME" \
+              --arg filescan_outcome "$FILESCAN_OUTCOME" \
+              --arg overview_outcome "$OVERVIEW_OUTCOME" \
+              '{
+                gate: "python-codeaudit",
+                advisory: true,
+                install_outcome: $install_outcome,
+                filescan_outcome: $filescan_outcome,
+                overview_outcome: $overview_outcome,
+                native_filescan_json_present: false
+              }' > codeaudit-results.json
+          fi
+
+      - name: CodeAudit summary for GitHub Step Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## CodeAudit (advisory)" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f codeaudit-results.json ]]; then
+            install_outcome="$(jq -r '.install_outcome' codeaudit-results.json)"
+            filescan_outcome="$(jq -r '.filescan_outcome' codeaudit-results.json)"
+            echo "- Install outcome: **${install_outcome}**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Filescan outcome: **${filescan_outcome}**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No \`codeaudit-results.json\` produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload CodeAudit artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qg-python-codeaudit-${{ github.run_id }}
+          path: |
+            codeaudit-results.json
+            codeaudit-reports
+          if-no-files-found: warn
+          retention-days: 30

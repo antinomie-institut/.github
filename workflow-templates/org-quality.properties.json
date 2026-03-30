@@ -1,6 +1,6 @@
 {
-  "name": "Antiphoria Quality Gate",
-  "description": "Calls the shared quality gate: Trivy, Ruff, Python tests, Node scripts, CodeAudit (advisory), Cursor handoff artifact, optional Trivy SARIF.",
+  "name": "Antiphoria Quality Gate (Legacy Combined)",
+  "description": "Legacy all-in-one caller template. Prefer org-quality-python/node/security templates for atomic gate selection.",
   "iconName": "octicon shield-check",
   "categories": [
     "Security",
