@@ -8,11 +8,6 @@ on:
         required: false
         type: string
         default: main
-      trivy-version:
-        description: Pinned Trivy scanner version.
-        required: false
-        type: string
-        default: "v0.69.3"
 
 permissions:
   contents: read
@@ -31,16 +26,38 @@ jobs:
           ref: ${{ inputs.policy-ref }}
           path: .org-policy
 
+
+      - name: Download and verify Trivy binary
+        shell: bash
+        env:
+          TRIVY_VERSION: "0.69.3"
+          # Source: https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_checksums.txt
+          # SHA256 verified via local download on 2026-04-02
+          TRIVY_SHA256: "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75"
+        run: |
+          set -euo pipefail
+          curl -sSfL -o trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tar.gz" | sha256sum -c -
+          tar -xzf trivy.tar.gz trivy
+          chmod +x trivy
+          echo "$(pwd)" >> "$GITHUB_PATH"
+
+      - name: Populate Trivy vulnerability DB cache
+        shell: bash
+        run: trivy fs --download-db-only --cache-dir .trivy-cache
+
       - name: Run Trivy JSON scan
         id: trivy_json
         continue-on-error: true
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-        with:
-          version: ${{ inputs.trivy-version }}
-          scan-type: fs
-          scan-ref: .
-          trivy-config: .org-policy/trivy.yaml
-          cache: "true"
+        shell: bash
+        run: |
+          trivy fs \
+            --config .org-policy/trivy.yaml \
+            --cache-dir .trivy-cache \
+            --format json \
+            --output trivy-results.json \
+            .
 
       - name: Build Trivy JSON summary
         if: always()
@@ -105,7 +122,6 @@ jobs:
           name: qg-trivy-${{ github.run_id }}
           path: |
             trivy-results.json
-            trivy-report.html
             trivy-summary.json
           if-no-files-found: warn
           retention-days: 30
