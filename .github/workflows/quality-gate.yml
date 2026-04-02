@@ -18,11 +18,6 @@ on:
         required: false
         type: string
         default: "20"
-      trivy-version:
-        description: Pinned Trivy scanner version.
-        required: false
-        type: string
-        default: "v0.69.3"
       # Safety rule: every run-* gate toggle defaults to false.
       run-trivy:
         description: Run Trivy filesystem scan.
@@ -101,7 +96,6 @@ jobs:
     uses: ./.github/workflows/qg-trivy.yml
     with:
       policy-ref: ${{ inputs.policy-ref }}
-      trivy-version: ${{ inputs.trivy-version }}
 
   python-ruff:
     needs: detect
