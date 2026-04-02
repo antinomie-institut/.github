@@ -61,29 +61,29 @@ jobs:
           case "$package_manager" in
             pnpm)
               if [ -f pnpm-lock.yaml ]; then
-                pnpm install --frozen-lockfile 2>&1 | tee node-install.log
+                pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tee node-install.log
               else
-                pnpm install 2>&1 | tee node-install.log
+                pnpm install --ignore-scripts 2>&1 | tee node-install.log
               fi
               rc="${PIPESTATUS[0]}"
               ;;
             yarn)
-              yarn install --immutable 2>&1 | tee node-install.log
+              yarn install --immutable --ignore-scripts 2>&1 | tee node-install.log
               rc="${PIPESTATUS[0]}"
               if [ "$rc" -ne 0 ]; then
-                yarn install --frozen-lockfile 2>&1 | tee -a node-install.log
+                yarn install --frozen-lockfile --ignore-scripts 2>&1 | tee -a node-install.log
                 rc="${PIPESTATUS[0]}"
               fi
               if [ "$rc" -ne 0 ]; then
-                yarn install 2>&1 | tee -a node-install.log
+                yarn install --ignore-scripts 2>&1 | tee -a node-install.log
                 rc="${PIPESTATUS[0]}"
               fi
               ;;
             *)
               if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-                npm ci 2>&1 | tee node-install.log
+                npm ci --ignore-scripts 2>&1 | tee node-install.log
               else
-                npm install 2>&1 | tee node-install.log
+                npm install --ignore-scripts 2>&1 | tee node-install.log
               fi
               rc="${PIPESTATUS[0]}"
               ;;
