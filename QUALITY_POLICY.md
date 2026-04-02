@@ -89,7 +89,8 @@ Pinned versions live in:
 Current hardening:
 
 - GitHub Actions are pinned by immutable commit SHA in workflows.
-- Trivy action is pinned, and scanner version is explicit (`trivy-version` input).
+- Trivy binary is downloaded directly and verified against a pinned SHA-256 hash.
+  No third-party GitHub Action is used for the scan invocation.
 - Ruff installs from a pinned and hashed requirement file.
 - CodeAudit is pinned; the workflow verifies the top-level wheel SHA before install.
 
