@@ -1,0 +1,11 @@
+{
+  "name": "Antiphoria Quality Gate (OpenSSF Scorecard)",
+  "description": "Runs OpenSSF Scorecard from centrally managed org policy and publishes SARIF plus public score results.",
+  "iconName": "octicon shield-check",
+  "categories": [
+    "Security"
+  ],
+  "filePatterns": [
+    ".*"
+  ]
+}

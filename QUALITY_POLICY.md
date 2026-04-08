@@ -18,6 +18,10 @@ Atomic reusable workers:
 - [.github/workflows/qg-node-quality.yml](.github/workflows/qg-node-quality.yml)
 - [.github/workflows/qg-ci-handoff.yml](.github/workflows/qg-ci-handoff.yml)
 
+Externally callable security signal workflow:
+
+- [.github/workflows/scorecard.yml](.github/workflows/scorecard.yml)
+
 ## Caller Templates
 
 Use stack-specific templates in [workflow-templates](workflow-templates):
@@ -25,6 +29,7 @@ Use stack-specific templates in [workflow-templates](workflow-templates):
 - [org-quality-python.yml](workflow-templates/org-quality-python.yml)
 - [org-quality-node.yml](workflow-templates/org-quality-node.yml)
 - [org-quality-security.yml](workflow-templates/org-quality-security.yml)
+- [org-quality-scorecard.yml](workflow-templates/org-quality-scorecard.yml)
 
 A legacy combined template remains available:
 
