@@ -58,12 +58,12 @@ jobs:
         shell: bash
         run: mkdir -p codeaudit-reports
 
-      - name: Run CodeAudit filescan (JSON)
+      - name: Run CodeAudit filescan (HTML)
         id: codeaudit_filescan
         if: always() && steps.install_codeaudit.outcome == 'success'
         continue-on-error: true
         shell: bash
-        run: codeaudit filescan . codeaudit-reports/filescan.json
+        run: codeaudit filescan . codeaudit-reports/filescan.html
 
       - name: Run CodeAudit overview (HTML)
         id: codeaudit_overview
@@ -80,40 +80,18 @@ jobs:
           FILESCAN_OUTCOME: ${{ steps.codeaudit_filescan.outcome }}
           OVERVIEW_OUTCOME: ${{ steps.codeaudit_overview.outcome }}
         run: |
-          native_valid=false
-          if [[ -f codeaudit-reports/filescan.json ]] && jq -e . codeaudit-reports/filescan.json >/dev/null 2>&1; then
-            native_valid=true
-          fi
-
-          if [ "$native_valid" = "true" ]; then
-            jq -n \
-              --arg install_outcome "$INSTALL_OUTCOME" \
-              --arg filescan_outcome "$FILESCAN_OUTCOME" \
-              --arg overview_outcome "$OVERVIEW_OUTCOME" \
-              --slurpfile filescan codeaudit-reports/filescan.json \
-              '{
-                gate: "python-codeaudit",
-                advisory: true,
-                install_outcome: $install_outcome,
-                filescan_outcome: $filescan_outcome,
-                overview_outcome: $overview_outcome,
-                native_filescan_json_present: true,
-                filescan: $filescan[0]
-              }' > codeaudit-results.json
-          else
-            jq -n \
-              --arg install_outcome "$INSTALL_OUTCOME" \
-              --arg filescan_outcome "$FILESCAN_OUTCOME" \
-              --arg overview_outcome "$OVERVIEW_OUTCOME" \
-              '{
-                gate: "python-codeaudit",
-                advisory: true,
-                install_outcome: $install_outcome,
-                filescan_outcome: $filescan_outcome,
-                overview_outcome: $overview_outcome,
-                native_filescan_json_present: false
-              }' > codeaudit-results.json
-          fi
+          jq -n \
+            --arg install_outcome "$INSTALL_OUTCOME" \
+            --arg filescan_outcome "$FILESCAN_OUTCOME" \
+            --arg overview_outcome "$OVERVIEW_OUTCOME" \
+            '{
+              gate: "python-codeaudit",
+              advisory: true,
+              install_outcome: $install_outcome,
+              filescan_outcome: $filescan_outcome,
+              overview_outcome: $overview_outcome,
+              reports_generated: ["filescan.html", "overview.html"]
+            }' > codeaudit-results.json
 
       - name: CodeAudit summary for GitHub Step Summary
         if: always()
