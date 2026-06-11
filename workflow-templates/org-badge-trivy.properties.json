@@ -1,0 +1,11 @@
+{
+  "name": "Antiphoria Badge (CI Trivy)",
+  "description": "Trivy vulnerability, secret, misconfig, and license scan for README badge display.",
+  "iconName": "octicon shield-check",
+  "categories": [
+    "Security"
+  ],
+  "filePatterns": [
+    ".*"
+  ]
+}

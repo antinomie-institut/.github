@@ -1,0 +1,19 @@
+# README badge workflow: Ruff lint + format (includes S/bandit security rules).
+name: CI Lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - $default-branch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    uses: antiphoria/.github/.github/workflows/qg-python-ruff.yml@main
+    with:
+      policy-ref: main
+      python-version: "3.12"

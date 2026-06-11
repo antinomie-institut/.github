@@ -1,0 +1,11 @@
+{
+  "name": "Antiphoria Badge (Gitleaks)",
+  "description": "Gitleaks secret scan across git history for README badge display.",
+  "iconName": "octicon shield-check",
+  "categories": [
+    "Security"
+  ],
+  "filePatterns": [
+    ".*"
+  ]
+}

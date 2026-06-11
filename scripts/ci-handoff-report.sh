@@ -34,7 +34,6 @@ RUFF_RESULTS_SRC="$(first_match 'ruff-results.json' || true)"
 RUFF_SUMMARY_SRC="$(first_match 'ruff-summary.json' || true)"
 PYTHON_TEST_RESULTS_SRC="$(first_match 'python-test-results.json' || true)"
 NODE_QUALITY_RESULTS_SRC="$(first_match 'node-quality-results.json' || true)"
-CODEAUDIT_RESULTS_SRC="$(first_match 'codeaudit-results.json' || true)"
 JOB_RESULTS_SRC="$INPUT_DIR/_job_results.json"
 
 copy_if_present "$TRIVY_RESULTS_SRC" "trivy-results.json" || true
@@ -43,18 +42,9 @@ copy_if_present "$RUFF_RESULTS_SRC" "ruff-results.json" || true
 copy_if_present "$RUFF_SUMMARY_SRC" "ruff-summary.json" || true
 copy_if_present "$PYTHON_TEST_RESULTS_SRC" "python-test-results.json" || true
 copy_if_present "$NODE_QUALITY_RESULTS_SRC" "node-quality-results.json" || true
-copy_if_present "$CODEAUDIT_RESULTS_SRC" "codeaudit-results.json" || true
 if [[ -f "$JOB_RESULTS_SRC" ]]; then
   cp "$JOB_RESULTS_SRC" "$OUT_DIR/_job_results.json"
 fi
-
-# Copy CodeAudit HTML files if present.
-while IFS= read -r -d '' f; do
-  lower="$(echo "$f" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$lower" == *codeaudit* ]]; then
-    cp "$f" "$OUT_DIR/codeaudit-$(basename "$f")" 2>/dev/null || true
-  fi
-done < <(find "$INPUT_DIR" -type f -name '*.html' -print0 2>/dev/null || true)
 
 has_file() {
   local file="$1"
@@ -76,7 +66,6 @@ jq -n \
   --argjson has_ruff_summary "$(has_file "ruff-summary.json")" \
   --argjson has_python_test_results "$(has_file "python-test-results.json")" \
   --argjson has_node_quality_results "$(has_file "node-quality-results.json")" \
-  --argjson has_codeaudit_results "$(has_file "codeaudit-results.json")" \
   '{
     generated_at: $generated_at,
     input_dir: $input_dir,
@@ -88,8 +77,7 @@ jq -n \
       ruff_results: $has_ruff_results,
       ruff_summary: $has_ruff_summary,
       python_test_results: $has_python_test_results,
-      node_quality_results: $has_node_quality_results,
-      codeaudit_results: $has_codeaudit_results
+      node_quality_results: $has_node_quality_results
     }
   }' >"$MANIFEST"
 
@@ -175,16 +163,6 @@ if [[ -f "$OUT_DIR/node-quality-results.json" ]]; then
     echo "- Lint: **$(jq -r '.lint.status // "unknown"' "$OUT_DIR/node-quality-results.json")**"
     echo "- Check: **$(jq -r '.check.status // "unknown"' "$OUT_DIR/node-quality-results.json")**"
     echo "- Build: **$(jq -r '.build.status // "unknown"' "$OUT_DIR/node-quality-results.json")**"
-    echo
-  } >>"$REPORT"
-fi
-
-if [[ -f "$OUT_DIR/codeaudit-results.json" ]]; then
-  {
-    echo "## CodeAudit (advisory)"
-    echo
-    echo "- Install outcome: **$(jq -r '.install_outcome // "unknown"' "$OUT_DIR/codeaudit-results.json")**"
-    echo "- Filescan outcome: **$(jq -r '.filescan_outcome // "unknown"' "$OUT_DIR/codeaudit-results.json")**"
     echo
   } >>"$REPORT"
 fi

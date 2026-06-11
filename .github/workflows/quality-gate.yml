@@ -34,11 +34,6 @@ on:
         required: false
         type: boolean
         default: false
-      run-python-codeaudit:
-        description: Run CodeAudit filescan for Python repositories (advisory).
-        required: false
-        type: boolean
-        default: false
       run-node-quality:
         description: Run Node dependency install plus lint/check/build scripts.
         required: false
@@ -112,14 +107,6 @@ jobs:
     with:
       python-version: ${{ inputs.python-version }}
 
-  python-codeaudit:
-    needs: detect
-    if: ${{ inputs.run-python-codeaudit && needs.detect.outputs.has_python == 'true' }}
-    uses: ./.github/workflows/qg-python-codeaudit.yml
-    with:
-      policy-ref: ${{ inputs.policy-ref }}
-      python-version: ${{ inputs.python-version }}
-
   node-quality:
     needs: detect
     if: ${{ inputs.run-node-quality && needs.detect.outputs.has_node == 'true' }}
@@ -182,7 +169,6 @@ jobs:
       - trivy
       - python-ruff
       - python-test
-      - python-codeaudit
       - node-quality
       - quality-gate
     uses: ./.github/workflows/qg-ci-handoff.yml
@@ -192,6 +178,5 @@ jobs:
       trivy-result: ${{ needs.trivy.result }}
       python-ruff-result: ${{ needs.python-ruff.result }}
       python-test-result: ${{ needs.python-test.result }}
-      python-codeaudit-result: ${{ needs.python-codeaudit.result }}
       node-quality-result: ${{ needs.node-quality.result }}
       quality-gate-result: ${{ needs.quality-gate.result }}

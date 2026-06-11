@@ -24,10 +24,6 @@ on:
         description: Result of python-test job.
         required: true
         type: string
-      python-codeaudit-result:
-        description: Result of python-codeaudit job.
-        required: true
-        type: string
       node-quality-result:
         description: Result of node-quality job.
         required: true
@@ -62,7 +58,6 @@ jobs:
             --arg trivy "${{ inputs.trivy-result }}" \
             --arg ruff "${{ inputs.python-ruff-result }}" \
             --arg pytest "${{ inputs.python-test-result }}" \
-            --arg codeaudit "${{ inputs.python-codeaudit-result }}" \
             --arg node "${{ inputs.node-quality-result }}" \
             --arg gate "${{ inputs.quality-gate-result }}" \
             '{
@@ -70,7 +65,6 @@ jobs:
               trivy: $trivy,
               "python-ruff": $ruff,
               "python-test": $pytest,
-              "python-codeaudit": $codeaudit,
               "node-quality": $node,
               "quality-gate": $gate
             }' > handoff-raw/_job_results.json

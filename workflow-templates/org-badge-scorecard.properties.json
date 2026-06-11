@@ -1,0 +1,11 @@
+{
+  "name": "Antiphoria Badge (OpenSSF Scorecard)",
+  "description": "OpenSSF Scorecard analysis for README badge and SARIF publication.",
+  "iconName": "octicon shield-check",
+  "categories": [
+    "Security"
+  ],
+  "filePatterns": [
+    ".*"
+  ]
+}

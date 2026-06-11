@@ -1,0 +1,17 @@
+# README badge workflow: Gitleaks secret scan.
+name: Gitleaks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - $default-branch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    uses: antiphoria/.github/.github/workflows/qg-gitleaks.yml@main
+    secrets: inherit

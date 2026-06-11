@@ -14,26 +14,61 @@ Atomic reusable workers:
 - [.github/workflows/qg-trivy.yml](.github/workflows/qg-trivy.yml)
 - [.github/workflows/qg-python-ruff.yml](.github/workflows/qg-python-ruff.yml)
 - [.github/workflows/qg-python-test.yml](.github/workflows/qg-python-test.yml)
-- [.github/workflows/qg-python-codeaudit.yml](.github/workflows/qg-python-codeaudit.yml)
 - [.github/workflows/qg-node-quality.yml](.github/workflows/qg-node-quality.yml)
+- [.github/workflows/qg-gitleaks.yml](.github/workflows/qg-gitleaks.yml)
 - [.github/workflows/qg-ci-handoff.yml](.github/workflows/qg-ci-handoff.yml)
 
 Externally callable security signal workflow:
 
 - [.github/workflows/scorecard.yml](.github/workflows/scorecard.yml)
 
-## Caller Templates
+## Monolith vs Badge Workflows
 
-Use stack-specific templates in [workflow-templates](workflow-templates):
+Use two complementary patterns in member repos:
+
+### Monolith (branch protection + handoff)
+
+Stack-specific templates in [workflow-templates](workflow-templates):
 
 - [org-quality-python.yml](workflow-templates/org-quality-python.yml)
 - [org-quality-node.yml](workflow-templates/org-quality-node.yml)
 - [org-quality-security.yml](workflow-templates/org-quality-security.yml)
-- [org-quality-scorecard.yml](workflow-templates/org-quality-scorecard.yml)
 
 A legacy combined template remains available:
 
 - [org-quality.yml](workflow-templates/org-quality.yml)
+
+These call the full `quality-gate.yml` orchestrator. Enable `run-ci-handoff: true` here only.
+In branch protection/rulesets, require the aggregate check: `quality-gate / quality-gate`.
+
+### Badge sidecars (README cosmetics)
+
+Badge templates call atomic workers directly (no orchestrator overhead):
+
+- [org-badge-ruff.yml](workflow-templates/org-badge-ruff.yml) → `CI Lint`
+- [org-badge-test.yml](workflow-templates/org-badge-test.yml) → `CI Tests`
+- [org-badge-trivy.yml](workflow-templates/org-badge-trivy.yml) → `CI Trivy`
+- [org-badge-gitleaks.yml](workflow-templates/org-badge-gitleaks.yml) → `Gitleaks`
+- [org-badge-scorecard.yml](workflow-templates/org-badge-scorecard.yml) → OpenSSF Scorecard
+
+Scorecard also has a legacy alias: [org-quality-scorecard.yml](workflow-templates/org-quality-scorecard.yml).
+
+Badge workflows are cosmetic sidecars. They do not replace the monolithic required check.
+
+### README badge markdown
+
+Replace `REPO` with the repository name (e.g. `antiphoria-slop-provenance`):
+
+```markdown
+[![CI Lint](https://github.com/antiphoria/REPO/actions/workflows/ci-lint.yml/badge.svg)](https://github.com/antiphoria/REPO/actions/workflows/ci-lint.yml)
+[![CI Tests](https://github.com/antiphoria/REPO/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/antiphoria/REPO/actions/workflows/ci-tests.yml)
+[![CI Trivy](https://github.com/antiphoria/REPO/actions/workflows/ci-trivy.yml/badge.svg)](https://github.com/antiphoria/REPO/actions/workflows/ci-trivy.yml)
+[![Gitleaks](https://github.com/antiphoria/REPO/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/antiphoria/REPO/actions/workflows/gitleaks.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/antiphoria/REPO/badge)](https://securityscorecards.dev/viewer/?uri=github.com/antiphoria/REPO)
+```
+
+Member repos must keep one workflow file per badge under `.github/workflows/` (GitHub URL constraint).
+Copy from org badge templates; filenames should match the badge URLs above.
 
 ## Gate Toggle Contract
 
@@ -42,7 +77,6 @@ All gate toggles are explicit boolean inputs on the orchestrator:
 - `run-trivy`
 - `run-python-ruff`
 - `run-python-test`
-- `run-python-codeaudit`
 - `run-node-quality`
 - `run-ci-handoff`
 
@@ -61,7 +95,7 @@ This prevents accidental org-wide rollout of new tools.
 
 ## Blocking vs Advisory
 
-Blocking jobs (aggregated by final `quality-gate`):
+All orchestrator jobs are blocking when enabled (aggregated by final `quality-gate`):
 
 - `detect`
 - `trivy` (when enabled)
@@ -69,11 +103,7 @@ Blocking jobs (aggregated by final `quality-gate`):
 - `python-test` (when enabled and Python detected)
 - `node-quality` (when enabled and Node detected)
 
-Advisory job:
-
-- `python-codeaudit` (when enabled and Python detected)
-
-`python-codeaudit` always emits structured JSON artifacts, but it does not block `quality-gate`.
+Python SAST is covered by Ruff `S` rules (flake8-bandit) in `qg-python-ruff`, not a separate gate.
 
 ## Repo-Agnostic Guardrails
 
@@ -88,7 +118,6 @@ Advisory job:
 Pinned versions live in:
 
 - [ci/requirements-ruff.txt](ci/requirements-ruff.txt) (hashed)
-- [ci/requirements-codeaudit.txt](ci/requirements-codeaudit.txt) (pinned)
 - [ci/requirements-tools.txt](ci/requirements-tools.txt)
 
 Current hardening:
@@ -97,7 +126,7 @@ Current hardening:
 - Trivy binary is downloaded directly and verified against a pinned SHA-256 hash.
   No third-party GitHub Action is used for the scan invocation.
 - Ruff installs from a pinned and hashed requirement file.
-- CodeAudit is pinned; the workflow verifies the top-level wheel SHA before install.
+- Gitleaks uses a pinned `gitleaks-action` commit SHA.
 
 ## Structured JSON Artifact Contract
 
@@ -107,7 +136,6 @@ Each gate writes dedicated JSON for machine triage:
 - Ruff: `ruff-results.json` + `ruff-summary.json`
 - Python tests: `python-test-results.json`
 - Node: `node-quality-results.json`
-- CodeAudit: `codeaudit-results.json`
 
 Artifacts are uploaded separately per gate:
 
@@ -115,7 +143,6 @@ Artifacts are uploaded separately per gate:
 - `qg-python-ruff-<run_id>`
 - `qg-python-test-<run_id>`
 - `qg-node-quality-<run_id>`
-- `qg-python-codeaudit-<run_id>`
 - `qg-ci-handoff-<run_id>`
 
 The handoff bundle includes:
@@ -128,14 +155,14 @@ The handoff bundle includes:
 
 In branch protection/rulesets, require the check named:
 
-- `quality-gate`
+- `quality-gate / quality-gate`
 
-This is the final aggregate gate job.
+This is the final aggregate gate job from the monolithic caller.
 
 ## Pilot and Rollout
 
-1. Pilot in one representative Python repo using `org-quality-python.yml`.
-2. Pilot in one representative Node repo using `org-quality-node.yml`.
-3. Validate artifact separation and JSON outputs in both pilots.
-4. Roll out stack-specific templates org-wide.
+1. Add badge workflows from `org-badge-*.yml` templates.
+2. Add monolithic `org-quality-python.yml` (or stack-specific equivalent) for branch protection.
+3. Validate badge URLs and handoff artifact on the monolith run.
+4. Roll out badge templates org-wide.
 5. Keep `org-quality.yml` only for legacy compatibility.

@@ -19,6 +19,5 @@ jobs:
       run-trivy: true
       run-python-ruff: false
       run-python-test: false
-      run-python-codeaudit: false
       run-node-quality: true
       run-ci-handoff: true

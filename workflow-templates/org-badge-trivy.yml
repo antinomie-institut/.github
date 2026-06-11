@@ -1,0 +1,18 @@
+# README badge workflow: Trivy filesystem scan.
+name: CI Trivy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - $default-branch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    uses: antiphoria/.github/.github/workflows/qg-trivy.yml@main
+    with:
+      policy-ref: main

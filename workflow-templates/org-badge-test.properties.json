@@ -1,0 +1,11 @@
+{
+  "name": "Antiphoria Badge (CI Tests)",
+  "description": "Python unit tests for README badge display. Calls org qg-python-test worker directly.",
+  "iconName": "octicon check-circle",
+  "categories": [
+    "Python"
+  ],
+  "filePatterns": [
+    "\\.py$"
+  ]
+}

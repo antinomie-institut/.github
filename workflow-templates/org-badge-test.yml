@@ -1,0 +1,18 @@
+# README badge workflow: Python unit tests.
+name: CI Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - $default-branch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: antiphoria/.github/.github/workflows/qg-python-test.yml@main
+    with:
+      python-version: "3.12"

@@ -1,0 +1,11 @@
+{
+  "name": "Antiphoria Badge (CI Lint)",
+  "description": "Ruff lint and format checks for README badge display. Calls org qg-python-ruff worker directly.",
+  "iconName": "octicon check-circle",
+  "categories": [
+    "Python"
+  ],
+  "filePatterns": [
+    "\\.py$"
+  ]
+}
